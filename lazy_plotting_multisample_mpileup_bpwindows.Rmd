@@ -1,0 +1,285 @@
+---
+title: "lazy mutant pimp mapping"
+author: "Zachary Lemmon"
+date: "`r format(Sys.time(),'%B %d, %Y')`"
+output: html_document
+---
+
+Mapping of three LAZY mutants, previously mapped to chromosomes 10, 8, and 5.
+
+```{r fig.height=9.5, fig.width=7, setup}
+library(ggplot2)
+library(reshape2)
+
+setwd('/Users/zlemmon/Documents/NGS_Analysis/MutantMapping/Lazy_SJP/MutantMappingDec2016/')
+home <- getwd()
+
+```
+
+```{r ReadData}
+
+SL2.50_ChrSizes <- read.table("/Users/zlemmon/Documents/Genomes/SL2.50_ChrSizes.txt", header = FALSE)
+colnames(SL2.50_ChrSizes) <- c("Chromosome", "Length", "PreviousLengths")
+
+SNPdat <- read.table("lazy_segsites_filt.txt.gz", header = FALSE)
+head(SNPdat)
+colnames(SNPdat) <- c("Chromosome", "Position", "REF", "ALT", "SumDepth", 
+  "M82", "M82_GT", "M82_REFdp", "M82_ALTdp",
+  "pimp", "pimp_GT", "pimp_REFdp", "pimp_ALTdp",
+  "lz10mut", "lz10mut_GT", "lz10mut_REFdp", "lz10mut_ALTdp",
+  "lz10wt", "lz10wt_GT", "lz10wt_REFdp", "lz10wt_ALTdp",
+  "lz8mut", "lz8mut_GT", "lz8mut_REFdp", "lz8mut_ALTdp",
+  "lz8wt", "lz8wt_GT", "lz8wt_REFdp", "lz8wt_ALTdp",
+  "lz5mut", "lz5mut_GT", "lz5mut_REFdp", "lz5mut_ALTdp",
+  "lz5wt", "lz5wt_GT", "lz5wt_REFdp", "lz5wt_ALTdp")
+head(SNPdat)
+
+```
+
+```{r CalculatingStats}
+
+# Do some preliminary calculations for use in sliding window analysis.
+
+SNPdat$lz10mut_dp  <- with(SNPdat, (lz10mut_REFdp + lz10mut_ALTdp))
+SNPdat$lz10wt_dp  <- with(SNPdat, (lz10wt_REFdp + lz10wt_ALTdp))
+SNPdat$lz8mut_dp  <- with(SNPdat, (lz8mut_REFdp + lz8mut_ALTdp))
+SNPdat$lz8wt_dp  <- with(SNPdat, (lz8wt_REFdp + lz8wt_ALTdp))
+SNPdat$lz5mut_dp  <- with(SNPdat, (lz5mut_REFdp + lz5mut_ALTdp))
+SNPdat$lz5wt_dp  <- with(SNPdat, (lz5wt_REFdp + lz5wt_ALTdp))
+
+SNPdat$M82_dp    <- with(SNPdat, (M82_REFdp + M82_ALTdp))
+SNPdat$pimp_dp   <- with(SNPdat, (pimp_REFdp + pimp_ALTdp))
+
+summary(SNPdat[,grepl("_dp",colnames(SNPdat))])
+
+# Create and check private SNP sets for pools, M82, slkori, and pimp
+SNPdat$group <- factor(paste(with(SNPdat, paste(sign(M82_REFdp), sign(M82_ALTdp),sep="")), with(SNPdat, paste(sign(pimp_REFdp), sign(pimp_ALTdp),sep="")), sep = ":"))
+
+table(SNPdat$group)
+SNPdat_nonhet_nonzero <- SNPdat[!grepl("11|00",SNPdat$group),]
+SNPdat_nonhet_nonzero <- droplevels.data.frame(SNPdat_nonhet_nonzero)
+table(SNPdat_nonhet_nonzero$group)
+
+SNPdat_nonhet_nonzero_seg <- subset(SNPdat_nonhet_nonzero, group %in% c("01:10","10:01"))
+SNPdat_nonhet_nonzero_seg <- droplevels.data.frame(SNPdat_nonhet_nonzero_seg)
+table(SNPdat_nonhet_nonzero_seg$group)
+
+SNPdat_nonhet_nonzero_seg[sort(sample(1:nrow(SNPdat_nonhet_nonzero_seg),20)),]
+group_to_private <- data.frame(group=names(table(SNPdat_nonhet_nonzero_seg$group)),private=c("M82","pimp"))
+SNPdat_nonhet_nonzero_seg$private <- factor(group_to_private$private[match(SNPdat_nonhet_nonzero_seg$group, group_to_private$group)])
+head(SNPdat_nonhet_nonzero_seg)
+#SNPdat_nonhet_nonzero_seg$ALT_allele <- with(SNPdat_nonhet_nonzero_seg, ifelse(private == "M82", substr(group, start = 2, stop = 2), ifelse(private == "pimp", substr(group, start = 5, stop = 5), ifelse(private == "slkori", substr(group, start = 8, stop = 8), "ERROR"))))
+table(SNPdat_nonhet_nonzero_seg$private)
+#table(SNPdat_nonhet_nonzero_seg$ALT_allele)
+
+
+###################
+# Look at some average coverage information at segregating sites to do some sanity check filtering of SNPs. 
+# For example to exclude sites with excessively high coverage (potential transposable/repetitive sites) or excessively low coverage (noisy data likely SNP calling error).
+summary(SNPdat_nonhet_nonzero_seg[,grepl("_dp",colnames(SNPdat_nonhet_nonzero_seg))])
+
+SNPdat_nonhet_nonzero_seg_filt <- subset(SNPdat_nonhet_nonzero_seg, M82_dp >= 10 &  pimp_dp >= 10 & lz10mut_dp>10 & lz10wt_dp>10 & lz8mut_dp>10 & lz8wt_dp>10 & lz5mut_dp>10 & lz5wt_dp>10)
+SNPdat_filt2 <- SNPdat_nonhet_nonzero_seg_filt
+#SNPdat_filt2 <- subset(SNPdat_nonhet_nonzero_seg_filt, abs(0.5 - sfasmut_SnpIdx) <= 0.2 | abs(0.5 - sfaswt_SnpIdx) <= 0.2)
+#SNPdat_filt2[,c("sfasmut_SnpIdx","sfaswt_SnpIdx")]
+#summary(SNPdat_filt2)
+nrow(SNPdat_nonhet_nonzero_seg_filt)
+nrow(SNPdat_filt2)
+SNPdat_nonhet_nonzero_seg_filt[sort(sample(1:nrow(SNPdat_nonhet_nonzero_seg_filt),10)),]
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),20)),]
+
+#########
+# sliding window analysis
+
+pools <- c("lz10mut", "lz10wt", "lz8mut", "lz8wt", "lz5mut", "lz5wt") 
+haplotypes <- c("M82","pimp")
+firstcols <- c("chr","start_pos")
+numbsnpcols <- paste(rep("NumbSNPs", each=length(haplotypes)), haplotypes,sep="_")
+#numbsnpcols <- "NumbSNPs"
+depthcols <- paste(rep(c("definingdepth","totaldepth"),length(haplotypes)),rep(pools,each=length(haplotypes)*2),rep(haplotypes,each=2),sep="_")
+#depthcols <- c("totaldepth", paste("depth", pools, rep(haplotypes, each=length(pools)), sep = "_"))
+propcols <- paste(rep("proportion",each=length(haplotypes)), rep(pools,each=length(haplotypes)), haplotypes, sep = "_")
+#snpidxcols <- paste(rep("MeanSnpIdx",each=length(haplotypes)), rep(pools,each=length(haplotypes)), haplotypes, sep = "_")
+#snpidxcols <- "DeltaSnpIdx"
+cols <- c(firstcols,numbsnpcols,depthcols,propcols)
+
+window <- 1000000
+slide <- window/10
+rows <- c()
+for(i in c(1:nrow(SL2.50_ChrSizes))){
+  rows <- c(rows,paste(SL2.50_ChrSizes[i,"Chromosome"],seq(1,SL2.50_ChrSizes[i,"Length"],by=slide),sep="_"))
+}
+window.frame <- data.frame(matrix(nrow=length(rows),ncol=length(cols)))
+dimnames(window.frame) <- list(rows,cols)
+window.frame$chr <- sapply(strsplit(rownames(window.frame), split="_"), "[", 1)
+window.frame$start_pos <- sapply(strsplit(rownames(window.frame), split="_"), "[", 2)
+head(window.frame)
+for(chr in levels(SNPdat_filt2$Chromosome)){
+  cat("Working on",chr,"... ")
+  temp <- subset(SNPdat_filt2,Chromosome==chr)
+  temp.chrlength <- SL2.50_ChrSizes[SL2.50_ChrSizes$Chromosome == chr,"Length"]
+  for(spos in seq(1, temp.chrlength,by=slide)){
+    temp.range <- subset(temp, Position>=spos & Position<(spos+window-1))
+    for(haplo in haplotypes){
+      temp.range[,paste0("lz10mut_",haplo,"_dp")] <- with(temp.range, ifelse(private == haplo, lz10mut_ALTdp, lz10mut_REFdp))
+      temp.range[,paste0("lz10wt_",haplo,"_dp")] <- with(temp.range, ifelse(private == haplo, lz10wt_ALTdp, lz10wt_REFdp))
+      temp.range[,paste0("lz8mut_",haplo,"_dp")] <- with(temp.range, ifelse(private == haplo, lz8mut_ALTdp, lz8mut_REFdp))
+      temp.range[,paste0("lz8wt_",haplo,"_dp")] <- with(temp.range, ifelse(private == haplo, lz8wt_ALTdp, lz8wt_REFdp))
+      temp.range[,paste0("lz5mut_",haplo,"_dp")] <- with(temp.range, ifelse(private == haplo, lz5mut_ALTdp, lz5mut_REFdp))
+      temp.range[,paste0("lz5wt_",haplo,"_dp")] <- with(temp.range, ifelse(private == haplo, lz5wt_ALTdp, lz5wt_REFdp))
+    
+    
+      # Calculate individual SNP indices
+      temp.range$lz10mut_SnpIdx <- with(temp.range, lz10mut_M82_dp / lz10mut_dp)
+      temp.range$lz10wt_SnpIdx <- with(temp.range, lz10wt_M82_dp / lz10wt_dp)
+      
+      temp.range$lz8mut_SnpIdx <- with(temp.range, lz8mut_M82_dp / lz8mut_dp)
+      temp.range$lz8wt_SnpIdx <- with(temp.range, lz8wt_M82_dp / lz8wt_dp)
+      
+      temp.range$lz5mut_SnpIdx <- with(temp.range, lz5mut_M82_dp / lz5mut_dp)
+      temp.range$lz5wt_SnpIdx <- with(temp.range, lz5wt_M82_dp / lz5wt_dp)
+      
+      # Filter out SNPs that have both very biased ratios
+      #nrow(temp.range)
+      #temp.range2 <- subset(temp.range, (abs(lz10mut_SnpIdx-0.5) < 0.33 | abs(lz10wt_SnpIdx-0.5) < 0.33) & (abs(lz8mut_SnpIdx-0.5) < 0.33 | abs(lz8wt_SnpIdx-0.5) < 0.33) & (abs(lz5mut_SnpIdx-0.5) < 0.33 | abs(lz5wt_SnpIdx-0.5) < 0.33))
+      #nrow(temp.range2)
+      #seq(0,1,by=0.1) - .5
+    
+      # Enter the numbers into the window.frame
+      window.frame[paste(chr,spos,sep="_"), paste0("NumbSNPs_",haplo)] <- nrow(temp.range)
+        
+      #window.frame[paste(chr,spos,sep="_"), paste0("totaldepth")] <- sum(temp.range[,"SumDepth"])
+      #summary(temp.range)
+      
+      window.frame[paste(chr,spos,sep="_"), paste0("definingdepth_lz10mut_",haplo)] <- sum(temp.range[,paste0("lz10mut_",haplo,"_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("definingdepth_lz10wt_",haplo)] <- sum(temp.range[,paste0("lz10wt_",haplo,"_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("definingdepth_lz8mut_",haplo)] <- sum(temp.range[,paste0("lz8mut_",haplo,"_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("definingdepth_lz8wt_",haplo)] <- sum(temp.range[,paste0("lz8wt_",haplo,"_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("definingdepth_lz5mut_",haplo)] <- sum(temp.range[,paste0("lz5mut_",haplo,"_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("definingdepth_lz5wt_",haplo)] <- sum(temp.range[,paste0("lz5wt_",haplo,"_dp")])
+      
+      
+      window.frame[paste(chr,spos,sep="_"), paste0("totaldepth_lz10mut_",haplo)] <- sum(temp.range[,paste0("lz10mut_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("totaldepth_lz10wt_",haplo)] <- sum(temp.range[,paste0("lz10wt_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("totaldepth_lz8mut_",haplo)] <- sum(temp.range[,paste0("lz8mut_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("totaldepth_lz8wt_",haplo)] <- sum(temp.range[,paste0("lz8wt_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("totaldepth_lz5mut_",haplo)] <- sum(temp.range[,paste0("lz5mut_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("totaldepth_lz5wt_",haplo)] <- sum(temp.range[,paste0("lz5wt_dp")])
+      
+      window.frame[paste(chr,spos,sep="_"), paste0("proportion_lz10mut_",haplo)] <- sum(temp.range[,paste0("lz10mut_",haplo,"_dp")]) / sum(temp.range[,paste0("lz10mut_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("proportion_lz10wt_",haplo)] <- sum(temp.range[,paste0("lz10wt_",haplo,"_dp")]) / sum(temp.range[,paste0("lz10wt_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("proportion_lz8mut_",haplo)] <- sum(temp.range[,paste0("lz8mut_",haplo,"_dp")]) / sum(temp.range[,paste0("lz8mut_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("proportion_lz8wt_",haplo)] <- sum(temp.range[,paste0("lz8wt_",haplo,"_dp")]) / sum(temp.range[,paste0("lz8wt_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("proportion_lz5mut_",haplo)] <- sum(temp.range[,paste0("lz5mut_",haplo,"_dp")]) / sum(temp.range[,paste0("lz5mut_dp")])
+      window.frame[paste(chr,spos,sep="_"), paste0("proportion_lz5wt_",haplo)] <- sum(temp.range[,paste0("lz5wt_",haplo,"_dp")]) / sum(temp.range[,paste0("lz5wt_dp")])
+      
+      window.frame[paste(chr,spos,sep="_"), paste0("MeanSnpIdx_lz10mut_pimp")] <- mean(temp.range[,paste0("lz10mut_SnpIdx")], na.rm = TRUE)
+      window.frame[paste(chr,spos,sep="_"), paste0("MeanSnpIdx_lz10wt_pimp")] <- mean(temp.range[,paste0("lz10wt_SnpIdx")], na.rm = TRUE)
+      
+      window.frame[paste(chr,spos,sep="_"), paste0("MeanSnpIdx_lz8mut_pimp")] <- mean(temp.range[,paste0("lz8mut_SnpIdx")], na.rm = TRUE)
+      window.frame[paste(chr,spos,sep="_"), paste0("MeanSnpIdx_lz8wt_pimp")] <- mean(temp.range[,paste0("lz8wt_SnpIdx")], na.rm = TRUE)
+      
+      window.frame[paste(chr,spos,sep="_"), paste0("MeanSnpIdx_lz5mut_pimp")] <- mean(temp.range[,paste0("lz5mut_SnpIdx")], na.rm = TRUE)
+      window.frame[paste(chr,spos,sep="_"), paste0("MeanSnpIdx_lz5wt_pimp")] <- mean(temp.range[,paste0("lz5wt_SnpIdx")], na.rm = TRUE)
+      
+    }
+    #window.frame[paste(chr,spos,sep="_"),]
+  }
+  cat("Done!\n")
+}
+
+head(window.frame) ; str(window.frame)
+grep("M82",colnames(window.frame), value = TRUE)
+sum(window.frame$NumbSNPs_M82 == 0)
+nrow(window.frame)
+## Fairly clean, only a few "M82" regions
+temp.sub <- subset(window.frame, NumbSNPs_M82 > 0)[,grep("M82",colnames(window.frame), value = TRUE)]
+
+# Looks like a few regions running around... lets fill in and get some pictures
+#window.frame[window.frame[,"NumbSNPs_M82"] == 0, c("definingdepth_Apool_M82", "totaldepth_Apool_M82" ,   "definingdepth_Bpool_M82",
+"totaldepth_Bpool_M82" ,   "definingdepth_Cpool_M82", "totaldepth_Cpool_M82" ,   "proportion_Apool_M82" ,  
+"proportion_Bpool_M82" ,   "proportion_Cpool_M82"  ,  "MeanSnpIdx_Apool_M82"  ,  "MeanSnpIdx_Bpool_M82" ,  
+"MeanSnpIdx_Cpool_M82"  )] <- 0
+
+for(i in c(2:ncol(window.frame))){ window.frame[,i] <- as.numeric(window.frame[,i]) }
+
+head(window.frame)
+colnames(window.frame)
+# window.frame <- window.frame[,c(1:41)]
+ratio_lz10mut_M82bypimp <- with(window.frame, (definingdepth_lz10mut_M82 / (totaldepth_lz10mut_M82-definingdepth_lz10mut_M82 + 0.5)))
+ratio_lz10wt_M82bypimp <- with(window.frame, (definingdepth_lz10wt_M82 / (totaldepth_lz10wt_M82-definingdepth_lz10wt_M82 + 0.5)))
+ratio_lz8mut_M82bypimp <- with(window.frame, (definingdepth_lz8mut_M82 / (totaldepth_lz8mut_M82-definingdepth_lz8mut_M82 + 0.5)))
+ratio_lz8wt_M82bypimp <- with(window.frame, (definingdepth_lz8wt_M82 / (totaldepth_lz8wt_M82-definingdepth_lz8wt_M82 + 0.5)))
+ratio_lz5mut_M82bypimp <- with(window.frame, (definingdepth_lz5mut_M82 / (totaldepth_lz5mut_M82-definingdepth_lz5mut_M82 + 0.5)))
+ratio_lz5wt_M82bypimp <- with(window.frame, (definingdepth_lz5wt_M82 / (totaldepth_lz5wt_M82-definingdepth_lz5wt_M82 + 0.5)))
+
+
+window.frame$ratio_lz10_M82 <- ratio_lz10mut_M82bypimp / ratio_lz10wt_M82bypimp
+window.frame$ratio_lz8_M82 <- ratio_lz8mut_M82bypimp / ratio_lz8wt_M82bypimp
+window.frame$ratio_lz5_M82 <- ratio_lz5mut_M82bypimp / ratio_lz5wt_M82bypimp
+
+write.csv(window.frame, paste0("lazy_win",window,"s",slide,".csv"))
+
+window.frame.sub <- subset(window.frame, NumbSNPs_pimp > 10)
+
+nrow(window.frame)
+nrow(window.frame.sub)
+colnames(window.frame.sub)
+
+window.frame.melt <- melt(window.frame.sub, id.vars=c("chr","start_pos",grep("^NumbSNPs",colnames(window.frame),value = TRUE)), measure.vars = grep("^proportion|^ratio|^MeanSnpIdx",colnames(window.frame.sub)))
+head(window.frame.melt)
+str(window.frame.melt)
+
+window.frame.melt$Category <- sapply(strsplit(as.character(window.frame.melt$variable), split = "_"),"[",1)
+window.frame.melt$Genotype <- gsub("p$|m$","",sapply(strsplit(as.character(window.frame.melt$variable), split = "_"),"[",2))
+window.frame.melt$Haplotype<- sapply(strsplit(as.character(window.frame.melt$variable), split = "_"),"[",3)
+
+for(i in c("chr","variable","Category","Genotype","Haplotype")){ window.frame.melt[,i] <- factor(window.frame.melt[,i]) }
+str(window.frame.melt)
+levels(window.frame.melt$Category)
+levels(window.frame.melt$Genotype)
+levels(window.frame.melt$Haplotype)
+
+#######################
+# Plotting proportion on each chromosome...
+pdf(paste0("GenomeProportionPlots_w",window,"s",slide,".pdf"),width=7,height=35)
+for(i in levels(window.frame.melt$Genotype)[c(2,3,5,6,8,9)]){
+  p.chr <- ggplot(subset(window.frame.melt, Category == "proportion" & Genotype == i), aes(x = start_pos, y = value, group = Haplotype, colour = Haplotype)) + ggtitle(paste0(i," - Proportion Haplotype")) + expand_limits(y=c(0,1))
+  p.chr <- p.chr + geom_point(cex=0.75) + facet_wrap(~chr, ncol=1)
+  print(p.chr)
+}
+dev.off()
+
+
+
+########################
+# Ratios...
+
+pdf(paste0("SnpRatios_lazy_w",window,"s",slide,".pdf"), width=14, height=21)
+for(i in c("lz10", "lz8", "lz5")){
+  p.chr <- ggplot(subset(window.frame.melt, Category == "ratio" & Genotype == i), aes(x = start_pos, y = value, group = chr)) + expand_limits(y=c(0))
+  p.chr <- p.chr + geom_line() + facet_wrap(~chr, ncol=1) + ggtitle(paste0(i," s2 - SNPratios (M82/pimp) / (M82/pimp)"))
+  print(p.chr)
+}
+dev.off()
+
+# p.chr <- ggplot(subset(window.frame.sub, chr == "SL2.50ch03" & start_pos > 50000000), aes(x = start_pos, y = sfaspimp_MutByJ2, group = chr)) + expand_limits(y=c(0))
+# p.chr <- p.chr + geom_line() + facet_wrap(~chr, ncol=1) + ggtitle("Pimp F2 sfasMut by sfasJ2 ratios (nonpimp/pimp)")
+# print(p.chr)
+
+# window.frame.sub <- subset(window.frame, NumbSNPs_sfasori > 20)
+# pdf(paste0("M82F2Ratios_sfas_w",window,"s",slide,".pdf"), width=14, height=21)
+# p.chr <- ggplot(window.frame.sub, aes(x = start_pos, y = sfasm82_MutByWt, group = chr)) + expand_limits(y=c(0))
+# p.chr <- p.chr + geom_line() + facet_wrap(~chr, ncol=1) + ggtitle("M82 F2 sfasMut by sfasWt ratios (sfasori/non-sfasori)")
+# print(p.chr)
+# p.chr <- ggplot(window.frame.sub, aes(x = start_pos, y = sfasm82_MutByJ2, group = chr)) + expand_limits(y=c(0))
+# p.chr <- p.chr + geom_line() + facet_wrap(~chr, ncol=1) + ggtitle("M82 F2 sfasMut by sfasJ2 ratios (sfasori/non-sfasori)")
+# print(p.chr)
+# p.chr <- ggplot(window.frame.sub, aes(x = start_pos, y = sfasm82_J2ByWt, group = chr)) + expand_limits(y=c(0))
+# p.chr <- p.chr + geom_line() + facet_wrap(~chr, ncol=1) + ggtitle("M82 F2 sfasJ2 by sfasWt ratios (sfasori/non-sfasori)")
+# print(p.chr)
+# dev.off()
+
+```
+
+

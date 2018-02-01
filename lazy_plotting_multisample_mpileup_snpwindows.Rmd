@@ -1,0 +1,191 @@
+---
+title: "lazy pimp mapping"
+author: "Zachary Lemmon"
+date: "`r format(Sys.time(),'%B %d, %Y')`"
+output: html_document
+---
+
+*** Mapping of the lazy mutants from Soon-ju Park by Zachary H. Lemmon ***
+
+```{r fig.height=9.5, fig.width=7, setup}
+library(ggplot2)
+library(reshape2)
+
+setwd('/Users/zlemmon/Documents/NGS_Analysis/MutantMapping/Lazy_SJP/MutantMappingDec2016/')
+home <- getwd()
+
+```
+
+```{r ReadData}
+
+SL2.50_ChrSizes <- read.table("/Users/zlemmon/Documents/Genomes/SL2.50_ChrSizes.txt", header = FALSE)
+colnames(SL2.50_ChrSizes) <- c("Chromosome", "Length", "PreviousLengths")
+
+SNPdat <- read.table("lazy_segsites_filt.txt.gz", header = FALSE)
+head(SNPdat)
+colnames(SNPdat) <- c("Chromosome", "Position", "REF", "ALT", "SumDepth", 
+  "M82", "M82_GT", "M82_REFdp", "M82_ALTdp",
+  "pimp", "pimp_GT", "pimp_REFdp", "pimp_ALTdp",
+  "lz10mut", "lz10mut_GT", "lz10mut_REFdp", "lz10mut_ALTdp",
+  "lz10wt", "lz10wt_GT", "lz10wt_REFdp", "lz10wt_ALTdp",
+  "lz8mut", "lz8mut_GT", "lz8mut_REFdp", "lz8mut_ALTdp",
+  "lz8wt", "lz8wt_GT", "lz8wt_REFdp", "lz8wt_ALTdp",
+  "lz5mut", "lz5mut_GT", "lz5mut_REFdp", "lz5mut_ALTdp",
+  "lz5wt", "lz5wt_GT", "lz5wt_REFdp", "lz5wt_ALTdp")
+head(SNPdat)
+
+```
+
+```{r CalculatingStats}
+
+# Do some preliminary calculations for use in sliding window analysis.
+# SNPdat$sfasmut_SnpIdx  <- with(SNPdat, (sfasmut_ALTdp  / (sfasmut_ALTdp+sfasmut_REFdp)))
+# SNPdat$sfaswt_SnpIdx  <- with(SNPdat, (sfaswt_ALTdp  / (sfaswt_ALTdp+sfaswt_REFdp)))
+# 
+# SNPdat$sfasmutwt_DeltaSnpIdx <- with(SNPdat, sfasmut_SnpIdx-sfaswt_SnpIdx)
+
+SNPdat$lz10mut_dp  <- with(SNPdat, (lz10mut_REFdp + lz10mut_ALTdp))
+SNPdat$lz10wt_dp  <- with(SNPdat, (lz10wt_REFdp + lz10wt_ALTdp))
+SNPdat$lz8mut_dp  <- with(SNPdat, (lz8mut_REFdp + lz8mut_ALTdp))
+SNPdat$lz8wt_dp <- with(SNPdat, (lz8wt_REFdp + lz8wt_ALTdp))
+SNPdat$lz5mut_dp <- with(SNPdat, (lz5mut_REFdp + lz5mut_ALTdp))
+SNPdat$lz5wt_dp <- with(SNPdat, (lz5wt_REFdp + lz5wt_ALTdp))
+SNPdat$M82_dp    <- with(SNPdat, (M82_REFdp + M82_ALTdp))
+SNPdat$pimp_dp   <- with(SNPdat, (pimp_REFdp + pimp_ALTdp))
+
+summary(SNPdat[,grepl("_dp",colnames(SNPdat))])
+for(i in c("M82","pimp","lz10mut","lz10wt","lz8mut","lz8wt","lz5mut","lz5wt")){
+  print(head(SNPdat[,grepl(paste(i),colnames(SNPdat))]))
+}
+  
+# Create and check private SNP sets for pools: M82 and pimp
+SNPdat$group <- factor(paste(with(SNPdat, paste(sign(M82_REFdp), sign(M82_ALTdp),sep="")), with(SNPdat, paste(sign(pimp_REFdp), sign(pimp_ALTdp),sep="")), sep = ":"))
+
+table(SNPdat$group)
+SNPdat_nonhet_nonzero <- SNPdat[!grepl("11|00",SNPdat$group),]
+SNPdat_nonhet_nonzero <- droplevels.data.frame(SNPdat_nonhet_nonzero)
+table(SNPdat_nonhet_nonzero$group)
+
+#SNPdat_nonhet_nonzero_seg <- subset(SNPdat_nonhet_nonzero, group %in% c("01:01:10","01:10:01","10:01:01","01:10:10","10:01:10","10:10:01"))
+SNPdat_nonhet_nonzero_seg <- subset(SNPdat_nonhet_nonzero, group %in% c("01:10","10:01"))
+SNPdat_nonhet_nonzero_seg <- droplevels.data.frame(SNPdat_nonhet_nonzero_seg)
+table(SNPdat_nonhet_nonzero_seg$group)
+
+SNPdat_nonhet_nonzero_seg[sort(sample(1:nrow(SNPdat_nonhet_nonzero_seg),20)),]
+#group_to_private <- data.frame(group=names(table(SNPdat_nonhet_nonzero_seg$group)),private=c("slkori","pimp","M82","M82","pimp","slkori"))
+group_to_private <- 
+  data.frame(group = names(table(SNPdat_nonhet_nonzero_seg$group)), private = c("M82", "pimp"))
+SNPdat_nonhet_nonzero_seg$private <- factor(group_to_private$private[match(SNPdat_nonhet_nonzero_seg$group, group_to_private$group)])
+head(SNPdat_nonhet_nonzero_seg)
+SNPdat_nonhet_nonzero_seg$ALT_allele <- with(SNPdat_nonhet_nonzero_seg, 
+  ifelse(private == "M82", substr(group, start = 2, stop = 2),
+  ifelse(private == "pimp", substr(group, start = 5, stop = 5),
+  "ERROR")))
+table(SNPdat_nonhet_nonzero_seg$private)
+table(SNPdat_nonhet_nonzero_seg$ALT_allele)
+
+
+###################
+# Look at some average coverage information at segregating sites to do some sanity check filtering of SNPs. 
+# For example to exclude sites with excessively high coverage (potential transposable/repetitive sites) or excessively low coverage (noisy data likely SNP calling error).
+summary(SNPdat_nonhet_nonzero_seg[,grepl("_dp",colnames(SNPdat_nonhet_nonzero_seg))])
+
+SNPdat_nonhet_nonzero_seg_filt <- subset(SNPdat_nonhet_nonzero_seg, M82_dp >= 20 &  pimp_dp >= 20 & lz10mut_dp>10 & lz10wt_dp>10 & lz8mut_dp>10 & lz8wt_dp>10 & lz5mut_dp>10 & lz5wt_dp>10)
+SNPdat_filt2 <- SNPdat_nonhet_nonzero_seg_filt
+#SNPdat_filt2 <- subset(SNPdat_nonhet_nonzero_seg_filt, abs(0.5 - sfasmut_SnpIdx) <= 0.2 | abs(0.5 - sfaswt_SnpIdx) <= 0.2)
+#SNPdat_filt2[,c("sfasmut_SnpIdx","sfaswt_SnpIdx")]
+#summary(SNPdat_filt2)
+nrow(SNPdat_nonhet_nonzero_seg_filt)
+nrow(SNPdat_filt2)
+SNPdat_nonhet_nonzero_seg_filt[sort(sample(1:nrow(SNPdat_nonhet_nonzero_seg_filt),10)),]
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),20)),]
+
+#SNPdat_filt3 <- subset(SNPdat_filt2, private == "pimp")
+#nrow(SNPdat_filt3)
+
+SNPdat_filt2$lz10mut_SnpIdx <- with(SNPdat_filt2, ifelse(private == "M82", lz10mut_ALTdp / lz10mut_dp , lz10mut_REFdp / lz10mut_dp))
+SNPdat_filt2$lz10wt_SnpIdx  <- with(SNPdat_filt2, ifelse(private == "M82", lz10wt_ALTdp / lz10wt_dp , lz10wt_REFdp / lz10wt_dp))
+SNPdat_filt2$lz8mut_SnpIdx <- with(SNPdat_filt2, ifelse(private == "M82", lz8mut_ALTdp / lz8mut_dp , lz8mut_REFdp / lz8mut_dp))
+SNPdat_filt2$lz8wt_SnpIdx  <- with(SNPdat_filt2, ifelse(private == "M82", lz8wt_ALTdp / lz8wt_dp , lz8wt_REFdp / lz8wt_dp))
+SNPdat_filt2$lz5mut_SnpIdx <- with(SNPdat_filt2, ifelse(private == "M82", lz5mut_ALTdp / lz5mut_dp , lz5mut_REFdp / lz5mut_dp))
+SNPdat_filt2$lz5wt_SnpIdx  <- with(SNPdat_filt2, ifelse(private == "M82", lz5wt_ALTdp / lz5wt_dp , lz5wt_REFdp / lz5wt_dp))
+
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),20)),]
+SNPdat_filtM82 <- subset(SNPdat_filt2, private == "M82")
+SNPdat_filtM82[sort(sample(1:nrow(SNPdat_filtM82),20)),]
+
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),20)),c("Chromosome","Position","lz10mut_SnpIdx", "lz10wt_SnpIdx")]
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),20)),c("Chromosome","Position","lz8mut_SnpIdx", "lz8wt_SnpIdx")]
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),20)),c("Chromosome","Position","lz5mut_SnpIdx", "lz5wt_SnpIdx")]
+
+SNPdat_filt2$lz10_deltaSnpIdx <- with(SNPdat_filt2, lz10mut_SnpIdx - lz10wt_SnpIdx)
+SNPdat_filt2$lz8_deltaSnpIdx  <- with(SNPdat_filt2, lz8mut_SnpIdx  - lz8wt_SnpIdx)
+SNPdat_filt2$lz5_deltaSnpIdx  <- with(SNPdat_filt2, lz5mut_SnpIdx  - lz5wt_SnpIdx)
+
+SNPdat_filt2[sort(sample(1:nrow(SNPdat_filt2),30)),c("Chromosome","Position","lz10_deltaSnpIdx", "lz8_deltaSnpIdx", "lz5_deltaSnpIdx")]
+
+
+#########
+# sliding window analysis by sliding SNP window
+MeanDeltaSnp.frame <- data.frame(matrix(nrow=0,ncol = 7))
+dimnames(MeanDeltaSnp.frame) <- list(NULL, c("chr", "start_snp", "start_pos", "size_bp", "DeltaSnpIdx_lz10_pimp", "DeltaSnpIdx_lz8_pimp", "DeltaSnpIdx_lz5_pimp"))
+nrow(SNPdat_filt2)
+window = 100
+slide = window / 10
+for(chr in levels(SNPdat_filt2$Chromosome)){
+  cat("Working on",chr,"... \n")
+  for(spos in seq(1, window, by = slide)){
+    #SnpIdxDat_sub_chr <- subset(SNPdat_filt2, Chromosome == chr & private == "pimp")
+    SnpIdxDat_sub_chr <- subset(SNPdat_filt2, Chromosome == chr)
+    #str(SnpIdxDat_sub_chr)
+    temp.NumberSnps <- nrow(SnpIdxDat_sub_chr)
+    cat("\tchunk", spos, "... \n")
+    SnpIdxDat_sub_chr$win <- NA
+    SnpIdxDat_sub_chr[spos:temp.NumberSnps,"win"] <- rep(seq(spos, temp.NumberSnps, by = window), each = window)[1:(temp.NumberSnps-spos+1)]
+    
+    temp.table <- table(SnpIdxDat_sub_chr$win)
+    SnpIdxDat_sub_chr <- subset(SnpIdxDat_sub_chr, win %in% names(temp.table[temp.table == window]))
+    DeltaSnpIdx.lz10.agg <- aggregate(SnpIdxDat_sub_chr$lz10_deltaSnpIdx, by = list(factor(SnpIdxDat_sub_chr$win)), mean)
+    DeltaSnpIdx.lz8.agg  <- aggregate(SnpIdxDat_sub_chr$lz8_deltaSnpIdx,  by = list(factor(SnpIdxDat_sub_chr$win)), mean)
+    DeltaSnpIdx.lz5.agg  <- aggregate(SnpIdxDat_sub_chr$lz5_deltaSnpIdx,  by = list(factor(SnpIdxDat_sub_chr$win)), mean)
+    start_pos.agg <- aggregate(SnpIdxDat_sub_chr$Position, by = list(factor(SnpIdxDat_sub_chr$win)), min)
+    end_pos.agg <- aggregate(SnpIdxDat_sub_chr$Position, by = list(factor(SnpIdxDat_sub_chr$win)), max)
+
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"chr"] <- chr
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"start_snp"] <- as.numeric(as.character(start_pos.agg[,1]))
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"number_of_snps"] <- window
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"start_pos"] <- start_pos.agg[,2]
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"size_bp"] <- end_pos.agg[,2] - start_pos.agg[,2]
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"DeltaSnpIdx_lz10_pimp"] <- DeltaSnpIdx.lz10.agg[,2]
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"DeltaSnpIdx_lz8_pimp"] <- DeltaSnpIdx.lz8.agg[,2]
+    MeanDeltaSnp.frame[paste(rep(chr, each = nrow(start_pos.agg)), start_pos.agg[,2], sep = "_"),"DeltaSnpIdx_lz5_pimp"] <- DeltaSnpIdx.lz5.agg[,2]
+  }
+}
+MeanDeltaSnp.frame <- MeanDeltaSnp.frame[with(MeanDeltaSnp.frame, order(chr,start_pos)),]
+str(MeanDeltaSnp.frame)
+write.csv(MeanDeltaSnp.frame, "MeanDeltaSnpIdx.csv")
+
+head(MeanDeltaSnp.frame)
+
+lz10_95 <- quantile(SNPdat_filt2[,c("lz10_deltaSnpIdx")], probs = 0.95)
+lz8_95  <- quantile(SNPdat_filt2[,c("lz8_deltaSnpIdx")],  probs = 0.95)
+lz5_95  <- quantile(SNPdat_filt2[,c("lz5_deltaSnpIdx")],  probs = 0.95)
+
+pdf(paste0("lz_DeltaSnpIdx_w",window,"snps_s",slide,".pdf"), height = 21, width = 7)
+p <- ggplot(MeanDeltaSnp.frame, aes(x = start_pos, y = DeltaSnpIdx_lz10_pimp)) + geom_point(cex = 0.5) + facet_wrap(~ chr, ncol = 1)
+p <- p + expand_limits(y = c(-1,1)) + ggtitle(paste0("Mean DeltaSnpIdx - lz10 - w",window,"s",slide))
+p <- p + geom_hline(yintercept = quantile(subset(SNPdat_filt2, private == "pimp")[,c("lz10_deltaSnpIdx")], probs = 0.95), colour = "red")
+print(p)
+p <- ggplot(MeanDeltaSnp.frame, aes(x = start_pos, y = DeltaSnpIdx_lz8_pimp))+ geom_point(cex = 0.5) + facet_wrap(~ chr, ncol = 1)
+p <- p + expand_limits(y = c(-1,1)) + ggtitle(paste0("Mean DeltaSnpIdx - lz8 - w",window,"s",slide))
+p <- p + geom_hline(yintercept = quantile(subset(SNPdat_filt2, private == "pimp")[,c("lz8_deltaSnpIdx")], probs = 0.95), colour = "red")
+print(p)
+p <- ggplot(MeanDeltaSnp.frame, aes(x = start_pos, y = DeltaSnpIdx_lz5_pimp))+ geom_point(cex = 0.5) + facet_wrap(~ chr, ncol = 1)
+p <- p + expand_limits(y = c(-1,1)) + ggtitle(paste0("Mean DeltaSnpIdx - lz5 - w",window,"s",slide))
+p <- p + geom_hline(yintercept = quantile(subset(SNPdat_filt2, private == "pimp")[,c("lz5_deltaSnpIdx")], probs = 0.95), colour = "red")
+print(p)
+dev.off()
+
+```
+
+
